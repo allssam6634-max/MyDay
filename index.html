@@ -1,0 +1,474 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>오늘 하루 관리</title>
+<link href="https://fonts.googleapis.com/css2?family=Roboto:wght@400;700&family=Noto+Sans+JP&family=Noto+Sans+SC&display=swap" rel="stylesheet">
+<script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+</head>
+<body>
+  <daily-planner></daily-planner>
+  <script>
+    const dailyPlannerTemplate = document.createElement('template');
+    dailyPlannerTemplate.innerHTML = `
+      <style>
+        body { font-family: 'Roboto', sans-serif; margin:0; padding:0; transition: background 0.3s, color 0.3s; }
+        .light { background:#f4f4f9; color:#333; }
+        .dark { background:#121212; color:#f0f0f0; }
+
+        .container { max-width:900px; margin:2rem auto; padding:1rem; }
+
+        h1,h2,h3 { text-align:center; }
+
+        .card {
+          background:white; border-radius:12px; padding:1.5rem; margin-bottom:2rem;
+          box-shadow:0 6px 15px rgba(0,0,0,0.1); transition: transform 0.2s, background 0.3s, color 0.3s;
+        }
+        .dark .card { background:#1e1e1e; color:#f0f0f0; }
+        .card:hover { transform: translateY(-3px); }
+
+        button { background: linear-gradient(135deg,#6a11cb,#2575fc); color:white;
+          border:none; padding:0.5rem 1rem; margin:0.3rem 0.3rem 0.3rem 0; border-radius:8px;
+          cursor:pointer; transition:0.3s; font-weight:600; }
+        button:hover { opacity:0.85; }
+        .download-btn { background:#28a745; margin-top: 1rem; width: 100%; }
+        .theme-btn { background:#ff9800; }
+
+        input[type="text"], textarea { box-sizing: border-box; width:100%; padding:0.7rem; margin:0.3rem 0 0.8rem 0; border-radius:8px; border:1px solid #ccc; font-size:1.1rem; transition:border 0.3s, background 0.3s, color 0.3s;}
+        .dark input[type="text"], .dark textarea { background:#2a2a2a; color:#f0f0f0; border:1px solid #555; }
+        input[type="text"]:focus, textarea:focus { border-color:#2575fc; outline:none; }
+
+        .task-item { display:flex; align-items:center; margin-bottom:0.5rem; }
+        .task-item input[type="checkbox"] { margin-right:0.5rem; transform:scale(1.3); }
+
+        select { padding:0.5rem 0.8rem; font-size:1rem; border-radius:6px; border:1px solid #ccc; margin-bottom:1rem; }
+        canvas { max-width:100%; }
+
+        .analysis-grid {
+          display: grid;
+          grid-template-columns: 1fr 1fr;
+          gap: 1.5rem;
+          align-items: end;
+          margin-top: 1.5rem;
+        }
+        .chart-container {
+          position: relative;
+          height: 300px;
+        }
+        .reflection-container textarea {
+          height: 250px;
+          resize: none;
+        }
+
+        @media (max-width: 768px) {
+          .analysis-grid {
+            grid-template-columns: 1fr;
+          }
+          .chart-container {
+            height: 250px;
+          }
+           .reflection-container textarea {
+            height: 200px;
+          }
+        }
+
+        .badge { display:block; text-align:center; background:#ffeb3b; color:#333; padding:0.5rem 1rem; border-radius:20px; font-weight:bold; margin-top:1rem; animation:pop 0.5s ease-out; }
+        .dark .badge { background:#ffc107; color:#121212; }
+        @keyframes pop { 0%{transform:scale(0);} 80%{transform:scale(1.2);} 100%{transform:scale(1);} }
+
+        #confetti-canvas { position:fixed; top:0; left:0; width:100%; height:100%; pointer-events:none; z-index:9999; }
+      </style>
+      <canvas id="confetti-canvas"></canvas>
+      <div class="container">
+        <h1 id="title">오늘 하루 관리</h1>
+        
+        <div style="text-align:center; margin-bottom:1rem;">
+          <select id="langSelect">
+            <option value="ko">한국어</option>
+            <option value="en">English</option>
+            <option value="jp">日本語</option>
+            <option value="zh">中文</option>
+            <option value="es">Español</option>
+          </select>
+          <button class="theme-btn" id="themeBtn">🌙 테마 전환</button>
+        </div>
+
+        <div class="card" id="step1">
+          <h2 id="step1-title">오늘 할 일</h2>
+          <div id="tasks-container"></div>
+          <button id="addTaskBtn"></button>
+        </div>
+
+        <div class="card" id="step2">
+          <h2 id="step2-title">오늘 한 일</h2>
+          <div id="done-container"></div>
+          <button id="addDoneBtn"></button>
+        </div>
+
+        <div class="card" id="step3">
+          <h2 id="step3-title">분석</h2>
+          <div class="analysis-grid">
+              <div class="chart-container">
+                  <canvas id="analysisChart"></canvas>
+              </div>
+              <div class="reflection-container">
+                  <h3 id="reflection-title">오늘 하루 반성</h3>
+                  <textarea id="reflection" rows="10"></textarea>
+              </div>
+          </div>
+          <button class="download-btn" id="downloadBtn">다운로드</button>
+          <div id="badge-container"></div>
+          <div id="history-container"></div>
+        </div>
+      </div>
+    `;
+
+    class DailyPlanner extends HTMLElement {
+        constructor() {
+            super();
+            this.attachShadow({ mode: 'open' });
+            this.shadowRoot.appendChild(dailyPlannerTemplate.content.cloneNode(true));
+
+            this.lang = 'ko';
+            this.theme = 'light';
+            this.tasks = [];
+            this.doneTasks = [];
+            this.history = [];
+            this.chart = null;
+
+            this.translations = {
+              ko:{title:"오늘 하루 관리",step1:"오늘 할 일",step2:"오늘 한 일",step3:"분석",reflectionTitle:"오늘 하루 반성",reflection:"오늘 하루를 돌아보며 생각을 기록하세요.",download:"다운로드",recentHistory:"최근 7일 기록",addTask:"항목 추가",addDone:"항목 추가",planned:"계획대로 완료",unplanned:"계획 외 완료",badge:"오늘 목표 달성!",plannedIncomplete:"계획 미완료",csvDate:"날짜",csvCompletedItems:"완료된 항목",csvIncompleteItems:"미완료 항목"},
+              en:{title:"Daily Planner",step1:"To Do Today",step2:"Done Today",step3:"Analysis",reflectionTitle:"Reflection on the Day",reflection:"Reflect on your day here.",download:"Download",recentHistory:"Recent 7-Day History",addTask:"Add Item",addDone:"Add Item",planned:"Planned Done",unplanned:"Unplanned Done",badge:"Goal Achieved Today!",plannedIncomplete:"Planned Incomplete",csvDate:"Date",csvCompletedItems:"Completed Items",csvIncompleteItems:"Incomplete Items"},
+              jp:{title:"今日の管理",step1:"今日のやること",step2:"今日やったこと",step3:"分析",reflectionTitle:"今日の振り返り",reflection:"今日の振り返りを書いてください。",download:"ダウンロード",recentHistory:"最近7日間の記録",addTask:"項目を追加",addDone:"項目を追加",planned:"計画通り完了",unplanned:"計画外完了",badge:"今日の目標達成!",plannedIncomplete:"計画未完了",csvDate:"日付",csvCompletedItems:"完了した項目",csvIncompleteItems:"未完了の項目"},
+              zh:{title:"今日管理",step1:"今日待办",step2:"今日完成",step3:"分析",reflectionTitle:"今日反思",reflection:"反思今天的事情。",download:"下载",recentHistory:"最近7天记录",addTask:"添加项",addDone:"添加项",planned:"按计划完成",unplanned:"计划外完成",badge:"今日目标达成!",plannedIncomplete:"计划未完成",csvDate:"日期",csvCompletedItems:"已完成项目",csvIncompleteItems:"未完成项目"},
+              es:{title:"Gestión diaria",step1:"Tareas de hoy",step2:"Hecho hoy",step3:"Análisis",reflectionTitle:"Reflexión del día",reflection:"Reflexiona sobre tu día aquí.",download:"Descargar",recentHistory:"Registro de los últimos 7 días",addTask:"Añadir ítem",addDone:"Añadir ítem",planned:"Completado planificado",unplanned:"Completado no planificado",badge:"¡Meta alcanzada hoy!",plannedIncomplete:"Planificado incompleto",csvDate:"Fecha",csvCompletedItems:"Artículos completados",csvIncompleteItems:"Artículos incompletos"}
+            };
+        }
+
+        connectedCallback() {
+            this.loadData();
+            this.shadowRoot.getElementById('langSelect').addEventListener('change', (e) => this.setLang(e.target.value));
+            this.shadowRoot.getElementById('themeBtn').addEventListener('click', () => this.toggleTheme());
+            this.shadowRoot.getElementById('addTaskBtn').addEventListener('click', () => this.addTask());
+            this.shadowRoot.getElementById('addDoneBtn').addEventListener('click', () => this.addDone());
+            this.shadowRoot.getElementById('downloadBtn').addEventListener('click', () => this.downloadData());
+
+            this.setLang(this.lang);
+            this.renderTasks();
+            this.renderDone();
+            this.updateAndRenderHistory();
+            this.analyze();
+        }
+
+        saveData() {
+            const data = {
+                lang: this.lang,
+                theme: this.theme,
+                tasks: this.tasks,
+                doneTasks: this.doneTasks,
+                history: this.history
+            };
+            localStorage.setItem('dailyPlanner', JSON.stringify(data));
+        }
+
+        loadData() {
+            const data = JSON.parse(localStorage.getItem('dailyPlanner'));
+            if (data) {
+                this.lang = data.lang || 'ko';
+                this.theme = data.theme || 'light';
+                this.tasks = data.tasks || [];
+                this.doneTasks = data.doneTasks || [];
+                this.history = data.history || [];
+            }
+        }
+
+        setLang(l) {
+            this.lang = l;
+            this.shadowRoot.getElementById('title').innerText = this.translations[l].title;
+            this.shadowRoot.getElementById('step1-title').innerText = this.translations[l].step1;
+            this.shadowRoot.getElementById('step2-title').innerText = this.translations[l].step2;
+            this.shadowRoot.getElementById('step3-title').innerText = this.translations[l].step3;
+            this.shadowRoot.getElementById('reflection-title').innerText = this.translations[l].reflectionTitle;
+            this.shadowRoot.getElementById('reflection').placeholder = this.translations[l].reflection;
+            this.shadowRoot.getElementById('downloadBtn').innerText = this.translations[l].download;
+            this.shadowRoot.querySelector('#addTaskBtn').innerText = this.translations[l].addTask;
+            this.shadowRoot.querySelector('#addDoneBtn').innerText = this.translations[l].addDone;
+            this.analyze();
+            this.renderHistory(); 
+            this.saveData();
+        }
+
+        toggleTheme() {
+            this.theme = this.theme === 'light' ? 'dark' : 'light';
+            this.shadowRoot.querySelector('.container').className = `container ${this.theme}`;
+            this.saveData();
+        }
+
+        renderTasks() {
+            const container = this.shadowRoot.getElementById('tasks-container');
+            container.innerHTML = '';
+            this.tasks.forEach((t, i) => {
+                const div = document.createElement('div');
+                div.className = 'task-item';
+                div.innerHTML = `
+                  <input type="text" value="${t}" style="flex:1;">
+                  <button>삭제</button>
+                `;
+                div.querySelector('input').addEventListener('input', (e) => this.updateTask(i, e.target.value));
+                div.querySelector('button').addEventListener('click', () => this.removeTask(i));
+                container.appendChild(div);
+            });
+        }
+
+        addTask() {
+            this.tasks.push('');
+            this.doneTasks.push({ text: '', completed: false, sourceIndex: this.tasks.length - 1 });
+            this.renderTasks();
+            this.renderDone();
+            this.saveData();
+        }
+
+        updateTask(index, value) {
+            this.tasks[index] = value;
+            const doneTask = this.doneTasks.find(d => d.sourceIndex === index);
+            if (doneTask) {
+                doneTask.text = value;
+                this.renderDone();
+            }
+            this.saveData();
+        }
+
+        removeTask(index) {
+            this.tasks.splice(index, 1);
+            this.doneTasks = this.doneTasks.filter(d => d.sourceIndex !== index);
+            this.doneTasks.forEach(d => {
+                if (d.sourceIndex > index) d.sourceIndex--;
+            });
+            this.renderTasks();
+            this.renderDone();
+            this.updateAndRenderHistory();
+            this.analyze();
+        }
+
+        renderDone() {
+            const container = this.shadowRoot.getElementById('done-container');
+            container.innerHTML = '';
+            this.doneTasks.forEach((d, i) => {
+                const div = document.createElement('div');
+                div.className = 'task-item';
+                const deleteBtn = d.sourceIndex === undefined
+                    ? `<button>삭제</button>` : '';
+                div.innerHTML = `
+                  <input type="checkbox" ${d.completed ? 'checked' : ''}>
+                  <input type="text" value="${d.text}" style="flex:1;">
+                  ${deleteBtn}
+                `;
+                div.querySelector('input[type="checkbox"]').addEventListener('change', (e) => this.toggleDone(i, e.target.checked));
+                div.querySelector('input[type="text"]').addEventListener('input', (e) => this.updateDoneText(i, e.target.value));
+                if (deleteBtn) {
+                    div.querySelector('button').addEventListener('click', () => this.removeDone(i));
+                }
+                container.appendChild(div);
+            });
+        }
+
+        toggleDone(index, isChecked) {
+            this.doneTasks[index].completed = isChecked;
+            this.updateAndRenderHistory();
+            this.analyze();
+        }
+
+        updateDoneText(index, text) {
+            this.doneTasks[index].text = text;
+            if (this.doneTasks[index].sourceIndex === undefined) {
+                 this.updateAndRenderHistory();
+                 this.analyze();
+            } else {
+                this.tasks[this.doneTasks[index].sourceIndex] = text;
+                this.renderTasks();
+            }
+            this.saveData();
+        }
+
+        addDone() {
+            this.doneTasks.push({ text: '', completed: false });
+            this.renderDone();
+            this.saveData();
+        }
+
+        removeDone(index) {
+            this.doneTasks.splice(index, 1);
+            this.renderDone();
+            this.updateAndRenderHistory();
+            this.analyze();
+        }
+
+        updateAndRenderHistory() {
+            const plannedCompleted = this.doneTasks.filter(d => d.completed && d.sourceIndex !== undefined).length;
+            const unplannedCompleted = this.doneTasks.filter(d => d.completed && d.sourceIndex === undefined).length;
+            const today = new Date().toISOString().split('T')[0];
+            let todayHistory = this.history.find(h => h.date === today);
+
+            if (!todayHistory) {
+                todayHistory = { date: today, planned: 0, unplanned: 0 };
+                this.history.push(todayHistory);
+            }
+            todayHistory.planned = plannedCompleted;
+            todayHistory.unplanned = unplannedCompleted;
+
+            this.saveData();
+            this.renderHistory();
+        }
+
+        analyze() {
+            const plannedCompleted = this.doneTasks.filter(d => d.completed && d.sourceIndex !== undefined).length;
+            const unplannedCompleted = this.doneTasks.filter(d => d.completed && d.sourceIndex === undefined).length;
+            const plannedTotal = this.tasks.length;
+            const plannedIncomplete = plannedTotal - plannedCompleted;
+
+            const percent = plannedTotal > 0 ? Math.round((plannedCompleted / plannedTotal) * 100) : 0;
+
+            const ctx = this.shadowRoot.getElementById('analysisChart').getContext('2d');
+            if (this.chart) this.chart.destroy();
+            this.chart = new Chart(ctx, {
+                type: 'bar',
+                data: {
+                    labels: [
+                        this.translations[this.lang].planned,
+                        this.translations[this.lang].plannedIncomplete,
+                        this.translations[this.lang].unplanned
+                    ],
+                    datasets: [{
+                        data: [plannedCompleted, plannedIncomplete, unplannedCompleted],
+                        backgroundColor: ['#2575fc', '#e0e0e0', '#ff9800']
+                    }]
+                },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    scales: {
+                        y: {
+                            beginAtZero: true,
+                            ticks: {
+                                stepSize: 1
+                            }
+                        }
+                    },
+                    plugins: {
+                        legend: {
+                            display: false
+                        }
+                    }
+                }
+            });
+
+            const badgeContainer = this.shadowRoot.getElementById('badge-container');
+            badgeContainer.innerHTML = '';
+            if (percent === 100 && plannedTotal > 0) {
+                const badge = document.createElement('div');
+                badge.className = 'badge';
+                badge.innerText = this.translations[this.lang].badge;
+                badgeContainer.appendChild(badge);
+                this.launchConfetti();
+            }
+        }
+
+        renderHistory() {
+            const container = this.shadowRoot.getElementById('history-container');
+            container.innerHTML = `<h3>${this.translations[this.lang].recentHistory}</h3>`;
+            this.history.slice(-7).reverse().forEach(h => {
+                const div = document.createElement('div');
+                div.innerText = `${h.date} → ${this.translations[this.lang].planned}: ${h.planned}, ${this.translations[this.lang].unplanned}: ${h.unplanned}`;
+                container.appendChild(div);
+            });
+        }
+
+        downloadData() {
+            const reflection = this.shadowRoot.getElementById('reflection').value.replace(/"/g, '""');
+            const today = new Date().toISOString().split('T')[0];
+            const l = this.lang;
+
+            const completedTasks = this.doneTasks
+                .filter(d => d.completed)
+                .map(d => d.text);
+
+            const incompleteTasks = this.tasks.filter((task, index) => {
+                const doneTask = this.doneTasks.find(d => d.sourceIndex === index);
+                return !doneTask || !doneTask.completed;
+            });
+
+            const headers = [
+                this.translations[l].csvDate,
+                this.translations[l].csvCompletedItems,
+                this.translations[l].csvIncompleteItems,
+                this.translations[l].reflectionTitle
+            ];
+
+            let csvContent = "\uFEFF";
+            csvContent += headers.join(',') + '\n';
+
+            const row = [
+                today,
+                `"${completedTasks.join(', ').replace(/"/g, '""' )}"`,
+                `"${incompleteTasks.join(', ').replace(/"/g, '""' )}"`,
+                `"${reflection}"`
+            ];
+            csvContent += row.join(',') + '\n';
+
+            const blob = new Blob([csvContent], { type: "text/csv;charset=utf-8;" });
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = `daily_planner_${today}.csv`;
+            a.click();
+            URL.revokeObjectURL(url);
+        }
+
+        launchConfetti() {
+            const canvas = this.shadowRoot.getElementById('confetti-canvas');
+            const ctx = canvas.getContext('2d');
+            canvas.width = window.innerWidth;
+            canvas.height = window.innerHeight;
+            const confetti = [];
+            for (let i = 0; i < 150; i++) {
+                confetti.push({
+                    x: Math.random() * canvas.width,
+                    y: Math.random() * canvas.height,
+                    dx: (Math.random() - 0.5) * 2,
+                    dy: Math.random() * 3 + 2,
+                    r: Math.random() * 6 + 4,
+                    color: `hsl(${Math.random() * 360},100%,50%)`
+                });
+            }
+            let t = 0;
+            const animate = () => {
+                t++;
+                ctx.clearRect(0, 0, canvas.width, canvas.height);
+                confetti.forEach(c => {
+                    c.x += c.dx;
+                    c.y += c.dy;
+                    if (c.y > canvas.height) {
+                        c.y = 0;
+                        c.x = Math.random() * canvas.width;
+                    }
+                    ctx.fillStyle = c.color;
+                    ctx.beginPath();
+                    ctx.arc(c.x, c.y, c.r, 0, 2 * Math.PI);
+                    ctx.fill();
+                });
+
+                if (t < 120) {
+                    requestAnimationFrame(animate);
+                } else {
+                    ctx.clearRect(0, 0, canvas.width, canvas.height);
+                }
+            };
+            animate();
+        }
+    }
+
+    customElements.define('daily-planner', DailyPlanner);
+  </script>
+</body>
+</html>
